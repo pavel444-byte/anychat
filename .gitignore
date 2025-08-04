@@ -1,1 +1,4 @@
 .pylintrc
+.env
+.venv
+.vscode
