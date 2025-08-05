@@ -21,10 +21,6 @@ def clear_streamlit_cache_on_exit():
         if hasattr(st, 'cache_resource'):
             st.cache_resource.clear()
         
-        # Clear legacy cache if available
-        if hasattr(st, 'legacy_caching') and hasattr(st.legacy_caching, 'clear_cache'):
-            st.legacy_caching.clear_cache()
-        
         # Remove Streamlit cache directory
         streamlit_cache_dir = os.path.expanduser("~/.streamlit")
         if os.path.exists(streamlit_cache_dir):
