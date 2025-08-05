@@ -4,9 +4,38 @@ from dotenv import load_dotenv
 import os
 import requests
 import json
+import atexit
+import shutil
 from typing import List, Dict, Optional
 
 load_dotenv()
+
+# Function to clear all Streamlit cache on exit
+def clear_streamlit_cache_on_exit():
+    """Clear all Streamlit cache and session data when the app exits"""
+    try:
+        # Clear Streamlit's cache data
+        st.cache_data.clear()
+        
+        # Clear cache resource if available
+        if hasattr(st, 'cache_resource'):
+            st.cache_resource.clear()
+        
+        # Clear legacy cache if available
+        if hasattr(st, 'legacy_caching') and hasattr(st.legacy_caching, 'clear_cache'):
+            st.legacy_caching.clear_cache()
+        
+        # Remove Streamlit cache directory
+        streamlit_cache_dir = os.path.expanduser("~/.streamlit")
+        if os.path.exists(streamlit_cache_dir):
+            shutil.rmtree(streamlit_cache_dir, ignore_errors=True)
+        
+        print("✅ Streamlit cache cleared on exit")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not clear cache on exit: {e}")
+
+# Register the exit handler
+atexit.register(clear_streamlit_cache_on_exit)
 
 # Cache for models to avoid repeated API calls
 @st.cache_data(ttl=3600)  # Cache for 1 hour
@@ -110,18 +139,6 @@ if "cached_models" not in st.session_state:
 if "models_last_fetched" not in st.session_state:
     st.session_state.models_last_fetched = None
 
-# Configuration
-user_key = st.session_state.current_key
-model = st.session_state.current_model
-
-# Validate configuration
-if not user_key:
-    st.error("❌ API Key not found. Please enter your API key in the sidebar.")
-    st.stop()
-
-# Initialize OpenAI client with OpenRouter
-client = OpenAI(api_key=user_key, base_url="https://openrouter.ai/api/v1")
-
 # Streamlit page configuration
 st.set_page_config(
     page_title="AnyChat - OpenRouter LLM Chat",
@@ -133,61 +150,7 @@ st.set_page_config(
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# App header
-st.title("💬 AnyChat")
-st.caption(f"Chat with **{model}** via OpenRouter")
-
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# Chat input
-if prompt := st.chat_input("What would you like to chat about?"):
-    # Add user message to chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    
-    # Generate and display assistant response
-    with st.chat_message("assistant"):
-        try:
-            # Create a placeholder for streaming response
-            message_placeholder = st.empty()
-            full_response = ""
-            
-            # Make API call to OpenRouter
-            stream = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages
-                ],
-                stream=True,
-                temperature=0.7,
-                max_tokens=1000
-            )
-            
-            # Stream the response
-            for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    full_response += chunk.choices[0].delta.content
-                    message_placeholder.markdown(full_response + "▌")
-            
-            # Final response without cursor
-            message_placeholder.markdown(full_response)
-            
-        except Exception as e:
-            error_message = f"Error: {str(e)}"
-            st.error(error_message)
-            full_response = error_message
-    
-    # Add assistant response to chat history
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-# Enhanced sidebar with model and key editing
+# Enhanced sidebar with model and key editing (moved before main content)
 with st.sidebar:
     st.header("🔧 Configuration")
     
@@ -213,8 +176,8 @@ with st.sidebar:
     
     # Find current model index
     current_model_index = 0
-    if model in model_ids:
-        current_model_index = model_ids.index(model)
+    if st.session_state.current_model in model_ids:
+        current_model_index = model_ids.index(st.session_state.current_model)
     
     # Model dropdown with display names
     if model_ids:
@@ -288,6 +251,25 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
     
+    # Clear all cache button
+    if st.button("🧹 Clear All Cache", help="Clear Streamlit cache and session data"):
+        try:
+            # Clear all Streamlit caches
+            st.cache_data.clear()
+            if hasattr(st, 'cache_resource'):
+                st.cache_resource.clear()
+            
+            # Clear session state (except essential keys)
+            essential_keys = ['current_model', 'current_key']
+            keys_to_remove = [key for key in st.session_state.keys() if key not in essential_keys]
+            for key in keys_to_remove:
+                del st.session_state[key]
+            
+            st.success("✅ All cache cleared successfully!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Error clearing cache: {str(e)}")
+    
     st.divider()
     
     # Status Information
@@ -305,3 +287,70 @@ with st.sidebar:
     else:
         st.error("❌ API Key Missing")
         st.warning("Please enter your OpenRouter API key above")
+
+# Configuration (moved after sidebar)
+user_key = st.session_state.current_key
+model = st.session_state.current_model
+
+# App header
+st.title("💬 AnyChat")
+st.caption(f"Chat with **{model}** via OpenRouter")
+
+# Validate configuration and show appropriate content
+if not user_key:
+    st.error("❌ API Key not found. Please enter your API key in the sidebar.")
+    st.info("👈 Use the sidebar on the left to configure your OpenRouter API key and select a model.")
+    st.stop()
+
+# Initialize OpenAI client with OpenRouter
+client = OpenAI(api_key=user_key, base_url="https://openrouter.ai/api/v1")
+
+# Display chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Chat input
+if prompt := st.chat_input("What would you like to chat about?"):
+    # Add user message to chat history
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Generate and display assistant response
+    with st.chat_message("assistant"):
+        try:
+            # Create a placeholder for streaming response
+            message_placeholder = st.empty()
+            full_response = ""
+            
+            # Make API call to OpenRouter
+            stream = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": m["role"], "content": m["content"]}
+                    for m in st.session_state.messages
+                ],
+                stream=True,
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            # Stream the response
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    full_response += chunk.choices[0].delta.content
+                    message_placeholder.markdown(full_response + "▌")
+            
+            # Final response without cursor
+            message_placeholder.markdown(full_response)
+            
+        except Exception as e:
+            error_message = f"Error: {str(e)}"
+            st.error(error_message)
+            full_response = error_message
+    
+    # Add assistant response to chat history
+    st.session_state.messages.append({"role": "assistant", "content": full_response})
