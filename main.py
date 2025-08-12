@@ -7,64 +7,7 @@ import json
 import atexit
 import shutil
 from typing import List, Dict, Optional
-import threading
-import time
 
-# Try to import speech recognition, handle gracefully if not available
-try:
-    import speech_recognition as sr
-    SPEECH_RECOGNITION_AVAILABLE = True
-except ImportError:
-    SPEECH_RECOGNITION_AVAILABLE = False
-    sr = None
-
-# Check for audio system availability
-def check_audio_system():
-    """Check if audio system is available and working"""
-    if not SPEECH_RECOGNITION_AVAILABLE or sr is None:
-        return False, "Speech recognition library not available"
-    
-    try:
-        # First check if any microphones are available
-        mic_list = sr.Microphone.list_microphone_names()
-        if not mic_list:
-            return False, "No microphone devices found on system"
-        
-        # Try to initialize recognizer and microphone
-        r = sr.Recognizer()
-        with sr.Microphone() as source:
-            # Quick test - just initialize, don't record
-            pass
-        return True, f"Audio system available ({len(mic_list)} microphone(s) detected)"
-    except OSError as e:
-        error_msg = str(e).lower()
-        if "alsa" in error_msg or "card" in error_msg:
-            return False, "No sound card found - audio hardware may not be available"
-        elif "device" in error_msg:
-            return False, "Audio device access error - check permissions or hardware"
-        return False, f"Audio system error: {str(e)}"
-    except Exception as e:
-        return False, f"Audio system error: {str(e)}"
-
-def get_microphone_info():
-    """Get detailed microphone information for debugging"""
-    if not SPEECH_RECOGNITION_AVAILABLE or sr is None:
-        return "Speech recognition not available"
-    
-    try:
-        mic_list = sr.Microphone.list_microphone_names()
-        if not mic_list:
-            return "No microphones detected"
-        
-        info = f"Found {len(mic_list)} microphone(s):\n"
-        for i, name in enumerate(mic_list):
-            info += f"  {i}: {name}\n"
-        return info.strip()
-    except Exception as e:
-        return f"Error getting microphone info: {str(e)}"
-
-# Check audio system availability at startup
-AUDIO_SYSTEM_AVAILABLE, AUDIO_SYSTEM_ERROR = check_audio_system()
 
 load_dotenv()
 
@@ -79,10 +22,6 @@ def clear_streamlit_cache_on_exit():
         if hasattr(st, 'cache_resource'):
             st.cache_resource.clear()
         
-        # Clear legacy cache if available
-        if hasattr(st, 'legacy_caching') and hasattr(st.legacy_caching, 'clear_cache'):
-            st.legacy_caching.clear_cache()
-        
         # Remove Streamlit cache directory
         streamlit_cache_dir = os.path.expanduser("~/.streamlit")
         if os.path.exists(streamlit_cache_dir):
@@ -95,81 +34,6 @@ def clear_streamlit_cache_on_exit():
 # Register the exit handler
 atexit.register(clear_streamlit_cache_on_exit)
 
-# Speech recognition functions
-def record_audio():
-    """Record audio from microphone and return the recognized text"""
-    if not SPEECH_RECOGNITION_AVAILABLE or sr is None:
-        return None, "Speech recognition is not available. Please install: pip install speechrecognition pyaudio"
-    
-    if not AUDIO_SYSTEM_AVAILABLE:
-        return None, f"Audio system not available: {AUDIO_SYSTEM_ERROR}"
-    
-    try:
-        # Initialize recognizer
-        r = sr.Recognizer()
-        
-        # Use microphone as source
-        with sr.Microphone() as source:
-            # Adjust for ambient noise
-            r.adjust_for_ambient_noise(source, duration=1)
-            
-            # Record audio
-            audio = r.listen(source, timeout=10, phrase_time_limit=30)
-        
-        # Recognize speech using Google's speech recognition
-        text = r.recognize_google(audio)  # type: ignore
-        return text, None
-        
-    except sr.RequestError as e:
-        return None, f"Could not request results from speech recognition service: {e}"
-    except sr.UnknownValueError:
-        return None, "Could not understand audio. Please try again."
-    except sr.WaitTimeoutError:
-        return None, "Listening timeout. Please try again."
-    except OSError as e:
-        if "ALSA" in str(e) or "card" in str(e).lower():
-            return None, "Audio system error: No sound card available (ALSA error)"
-        return None, f"Audio system error: {e}"
-    except Exception as e:
-        return None, f"Error during speech recognition: {e}"
-
-def record_audio_async():
-    """Async wrapper for recording audio"""
-    if 'recording_status' not in st.session_state:
-        st.session_state.recording_status = 'idle'
-    
-    if 'recorded_text' not in st.session_state:
-        st.session_state.recorded_text = ""
-    
-    if 'recording_error' not in st.session_state:
-        st.session_state.recording_error = None
-    
-    def recording_thread():
-        try:
-            st.session_state.recording_status = 'recording'
-            text, error = record_audio()
-            
-            if error:
-                st.session_state.recording_error = error
-                st.session_state.recording_status = 'error'
-            else:
-                st.session_state.recorded_text = text
-                st.session_state.recording_status = 'completed'
-        except Exception as e:
-            st.session_state.recording_error = f"Recording thread error: {str(e)}"
-            st.session_state.recording_status = 'error'
-    
-    if st.session_state.recording_status == 'idle':
-        # Check if audio system is available before starting thread
-        if not AUDIO_SYSTEM_AVAILABLE:
-            st.session_state.recording_error = AUDIO_SYSTEM_ERROR
-            st.session_state.recording_status = 'error'
-            return
-        
-        # Start recording in a separate thread
-        thread = threading.Thread(target=recording_thread, name='recording_thread')
-        thread.daemon = True
-        thread.start()
 
 # Cache for models to avoid repeated API calls
 @st.cache_data(ttl=3600)  # Cache for 1 hour
@@ -266,6 +130,9 @@ if "current_model" not in st.session_state:
 if "current_key" not in st.session_state:
     st.session_state.current_key = os.getenv("anychat_key") or ""
 
+if "system_prompt" not in st.session_state:
+    st.session_state.system_prompt = os.getenv("anychat_system_prompt") or ""
+
 # Initialize session state for cached models
 if "cached_models" not in st.session_state:
     st.session_state.cached_models = None
@@ -287,6 +154,58 @@ if "messages" not in st.session_state:
 # Enhanced sidebar with model and key editing (moved before main content)
 with st.sidebar:
     st.header("🔧 Configuration")
+    
+    # System Prompt Section
+    st.subheader("📝 System Prompt")
+    
+    # System prompt text area
+    system_prompt = st.text_area(
+        "Enter system prompt:",
+        value=st.session_state.system_prompt,
+        height=150,
+        placeholder="You are a helpful AI assistant. Be concise and accurate in your responses.",
+        help="This prompt will be sent as the system message to guide the AI's behavior",
+        key="system_prompt_input"
+    )
+    
+    # Update system prompt if changed
+    if system_prompt != st.session_state.system_prompt:
+        st.session_state.system_prompt = system_prompt
+    
+    # System prompt controls
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💾 Save Prompt", help="Save system prompt to .env file"):
+            try:
+                # Read existing .env content
+                env_content = {}
+                if os.path.exists('.env'):
+                    with open('.env', 'r') as f:
+                        for line in f:
+                            if '=' in line and not line.strip().startswith('#'):
+                                key, value = line.strip().split('=', 1)
+                                env_content[key] = value
+                
+                # Update with system prompt
+                env_content['anychat_system_prompt'] = st.session_state.system_prompt
+                env_content['anychat_key'] = st.session_state.current_key
+                env_content['anychat_model'] = st.session_state.current_model
+                
+                # Write back to .env
+                with open('.env', 'w') as f:
+                    for key, value in env_content.items():
+                        f.write(f"{key}={value}\n")
+                
+                st.success("✅ System prompt saved!")
+            except Exception as e:
+                st.error(f"❌ Error saving prompt: {str(e)}")
+    
+    with col2:
+        if st.button("🗑️ Clear Prompt", help="Clear the system prompt"):
+            st.session_state.system_prompt = ""
+            st.rerun()
+    
+    st.divider()
     
     # Model Selection Section
     col1, col2 = st.columns([3, 1])
@@ -370,6 +289,7 @@ with st.sidebar:
             with open('.env', 'w') as f:
                 f.write(f"anychat_key={st.session_state.current_key}\n")
                 f.write(f"anychat_model={st.session_state.current_model}\n")
+                f.write(f"anychat_system_prompt={st.session_state.system_prompt}\n")
             st.success("✅ Configuration saved to .env file!")
             st.rerun()
         except Exception as e:
@@ -413,6 +333,13 @@ with st.sidebar:
     st.info(f"**Current Model:** {st.session_state.current_model}")
     st.info(f"**Messages:** {len(st.session_state.messages)}")
     
+    # System prompt status
+    if st.session_state.system_prompt.strip():
+        prompt_preview = st.session_state.system_prompt[:50] + "..." if len(st.session_state.system_prompt) > 50 else st.session_state.system_prompt
+        st.success(f"✅ System Prompt: {prompt_preview}")
+    else:
+        st.info("ℹ️ No system prompt set")
+    
     # API key status
     if st.session_state.current_key:
         # Mask the key for display
@@ -422,43 +349,6 @@ with st.sidebar:
         st.error("❌ API Key Missing")
         st.warning("Please enter your OpenRouter API key above")
     
-    st.divider()
-    
-    # Audio System Diagnostics
-    st.subheader("🎤 Audio System")
-    
-    if AUDIO_SYSTEM_AVAILABLE:
-        st.success(f"✅ {AUDIO_SYSTEM_ERROR}")
-    else:
-        st.error(f"❌ {AUDIO_SYSTEM_ERROR}")
-    
-    # Show microphone details in an expander
-    with st.expander("🔍 Audio Diagnostics", expanded=False):
-        mic_info = get_microphone_info()
-        st.text(mic_info)
-        
-        if not AUDIO_SYSTEM_AVAILABLE:
-            st.markdown("""
-            **Troubleshooting Audio Issues:**
-            
-            1. **No sound card found**: Your system may be running in a container or virtual environment without audio hardware
-            2. **Check hardware**: Ensure a microphone is connected and recognized by your system
-            3. **Install audio drivers**: You may need to install or configure audio drivers
-            4. **Container/VM**: If running in Docker/VM, you may need to enable audio passthrough
-            5. **Permissions**: Check if your user has permission to access audio devices
-            
-            **For Linux systems:**
-            ```bash
-            # Check for audio devices
-            arecord -l
-            
-            # Check if user is in audio group
-            groups $USER
-            
-            # Add user to audio group if needed
-            sudo usermod -a -G audio $USER
-            ```
-            """)
 
 # Configuration (moved after sidebar)
 user_key = st.session_state.current_key
@@ -482,56 +372,9 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Initialize session state for microphone
-if 'recording_status' not in st.session_state:
-    st.session_state.recording_status = 'idle'
-if 'recorded_text' not in st.session_state:
-    st.session_state.recorded_text = ""
-if 'recording_error' not in st.session_state:
-    st.session_state.recording_error = None
 
-# Chat input with microphone button
-col1, col2 = st.columns([6, 1])
-
-with col1:
-    # Regular text input
-    prompt = st.chat_input("What would you like to chat about?")
-
-with col2:
-    # Microphone button - only show if audio system is available
-    if AUDIO_SYSTEM_AVAILABLE:
-        if st.session_state.recording_status == 'idle':
-            if st.button("🎤", help="Click to record voice message", key="mic_button"):
-                record_audio_async()
-                st.rerun()
-        elif st.session_state.recording_status == 'recording':
-            st.button("🔴 Recording...", disabled=True, key="recording_button")
-            # Auto-refresh to check recording status
-            time.sleep(0.1)
-            st.rerun()
-        elif st.session_state.recording_status == 'completed':
-            if st.button("✅ Use Recording", help="Click to use the recorded text", key="use_recording_button"):
-                prompt = st.session_state.recorded_text
-                # Reset recording state
-                st.session_state.recording_status = 'idle'
-                st.session_state.recorded_text = ""
-                st.session_state.recording_error = None
-        elif st.session_state.recording_status == 'error':
-            if st.button("❌ Try Again", help="Recording failed, click to try again", key="retry_button"):
-                st.session_state.recording_status = 'idle'
-                st.session_state.recording_error = None
-                st.rerun()
-    else:
-        # Show disabled microphone button with tooltip explaining why it's disabled
-        st.button("🎤", disabled=True, help=f"Voice input disabled: {AUDIO_SYSTEM_ERROR}", key="mic_disabled")
-
-# Show recording status and text
-if st.session_state.recording_status == 'recording':
-    st.info("🎤 Listening... Speak now!")
-elif st.session_state.recording_status == 'completed' and st.session_state.recorded_text:
-    st.success(f"🎤 Recorded: \"{st.session_state.recorded_text}\"")
-elif st.session_state.recording_status == 'error' and st.session_state.recording_error:
-    st.error(f"🎤 {st.session_state.recording_error}")
+# Chat input
+prompt = st.chat_input("What would you like to chat about?")
 
 # Process the prompt (from text input or voice)
 if prompt:
@@ -549,13 +392,21 @@ if prompt:
             message_placeholder = st.empty()
             full_response = ""
             
+            # Prepare messages with system prompt if provided
+            messages = []
+            if st.session_state.system_prompt.strip():
+                messages.append({"role": "system", "content": st.session_state.system_prompt})
+            
+            # Add chat history
+            messages.extend([
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state.messages
+            ])
+            
             # Make API call to OpenRouter
             stream = client.chat.completions.create(
                 model=model,
-                messages=[
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages
-                ],
+                messages=messages,
                 stream=True,
                 temperature=0.7,
                 max_tokens=1000
@@ -578,8 +429,3 @@ if prompt:
     # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": full_response})
     
-    # Reset recording state if it was from voice input
-    if st.session_state.recording_status == 'completed':
-        st.session_state.recording_status = 'idle'
-        st.session_state.recorded_text = ""
-        st.session_state.recording_error = None
