@@ -31,4 +31,4 @@ Your AI chat with all what you need
 5. Run the server
     ```streamlit run main.py```
 ### Join our socials
-(Discord)[https://discord.gg/jQ9xRzxdWt]
+Discord - https://discord.gg/jQ9xRzxdWt
