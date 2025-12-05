@@ -5,35 +5,12 @@ from dotenv import load_dotenv
 import os
 import requests
 import json
-import atexit
-import shutil
 from typing import List, Dict, Optional
 
 
 load_dotenv()
 
-# Function to clear all Streamlit cache on exit
-def clear_streamlit_cache_on_exit():
-    """Clear all Streamlit cache and session data when the app exits"""
-    try:
-        # Clear Streamlit's cache data
-        st.cache_data.clear()
-        
-        # Clear cache resource if available
-        if hasattr(st, 'cache_resource'):
-            st.cache_resource.clear()
-        
-        # Remove Streamlit cache directory
-        streamlit_cache_dir = os.path.expanduser("~/.streamlit")
-        if os.path.exists(streamlit_cache_dir):
-            shutil.rmtree(streamlit_cache_dir, ignore_errors=True)
-        
-        print("✅ Streamlit cache cleared on exit")
-    except Exception as e:
-        print(f"⚠️ Warning: Could not clear cache on exit: {e}")
 
-# Register the exit handler
-atexit.register(clear_streamlit_cache_on_exit)
 
 
 # Cache for models to avoid repeated API calls
