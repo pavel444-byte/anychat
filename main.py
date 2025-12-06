@@ -392,7 +392,7 @@ with st.sidebar:
     st.divider()
     
     # Chat Controls Section
-    st.subheader("💬 Chat Controls")
+    st.subheader("Controls")
     
     # Clear chat button
     if st.button("🗑️ Clear Chat History"):
