@@ -4,8 +4,7 @@ import streamlit as st
 from dotenv import load_dotenv
 import os
 import requests
-import json
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, cast
 
 
 load_dotenv()
@@ -481,39 +480,31 @@ if prompt:
     # Generate and display assistant response
     with st.chat_message("assistant"):
         try:
-            # Initialize client based on selected provider
-            client = None
-            if selected_provider == "OpenRouter":
-                client = OpenAI(api_key=user_key, base_url="https://openrouter.ai/api/v1")
-            elif selected_provider == "OpenAI":
-                client = OpenAI(api_key=user_key)
-            elif selected_provider == "Anthropic":
-                client = Anthropic(api_key=user_key)
-
-            if client is None:
-                st.error(f"❌ Failed to initialize client for {selected_provider}. Please check your API key and selected provider.")
-                st.stop()
-
             # Create a placeholder for streaming response
             message_placeholder = st.empty()
             full_response = ""
-            
+
             # Prepare messages with system prompt if provided
             messages = []
             if st.session_state.system_prompt.strip():
                 messages.append({"role": "system", "content": st.session_state.system_prompt})
-            
+
             # Add chat history
             messages.extend([
                 {"role": m["role"], "content": m["content"]}
                 for m in st.session_state.messages
             ])
-            
-            # Make API call based on selected provider
+
+            # Make API call based on selected provider. Keep the clients in provider-specific
+            # branches so static checkers can safely resolve each SDK's streaming API.
             if selected_provider in ["OpenRouter", "OpenAI"]:
-                stream = client.chat.completions.create(
+                openai_client = OpenAI(
+                    api_key=user_key,
+                    base_url="https://openrouter.ai/api/v1" if selected_provider == "OpenRouter" else None,
+                )
+                stream = openai_client.chat.completions.create(
                     model=model,
-                    messages=messages,
+                    messages=cast(Any, messages),
                     stream=True,
                     temperature=0.7,
                     max_tokens=1000
@@ -524,6 +515,7 @@ if prompt:
                         full_response += chunk.choices[0].delta.content
                         message_placeholder.markdown(full_response + "▌")
             elif selected_provider == "Anthropic":
+                anthropic_client = Anthropic(api_key=user_key)
                 # Anthropic API expects messages in a specific format
                 anthropic_messages = []
                 system_message = None
@@ -533,15 +525,18 @@ if prompt:
                     else:
                         anthropic_messages.append({"role": msg["role"], "content": msg["content"]})
 
-                with client.messages.stream(
+                with anthropic_client.messages.stream(
                     model=model,
                     max_tokens=1000,
-                    messages=anthropic_messages,
-                    system=system_message if system_message else "" # Ensure system is always a string
+                    messages=cast(Any, anthropic_messages),
+                    system=system_message if system_message else "",  # Ensure system is always a string
                 ) as stream:
                     for text in stream.text_stream:
                         full_response += text
                         message_placeholder.markdown(full_response + "▌")
+            else:
+                st.error(f"❌ Unsupported provider: {selected_provider}")
+                st.stop()
             
             # Final response without cursor
             message_placeholder.markdown(full_response)
